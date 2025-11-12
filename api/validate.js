@@ -1,23 +1,21 @@
-// api/validate.js (Vercel serverless format)
-const express = require('express');
-const bodyParser = require('body-parser');
+const validKeys = ['ZHIJACK-2025']; // Nanti ganti DB
 
-const app = express();
-app.use(bodyParser.json());
+export default function handler(req, res) {
 
-// Key dummy (nanti ganti DB)
-const validKeys = ['ZHIJACK-2025', 'TEST-KEY-123'];
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
 
-app.post('/validate', (req, res) => {
   const { key } = req.body;
-  if (!key) {
-    return res.json({ success: false, message: 'Key required' });
-  }
-  if (validKeys.includes(key)) {
-    res.json({ success: true, message: 'Key valid' });
-  } else {
-    res.json({ success: false, message: 'Invalid key' });
-  }
-});
 
-module.exports = app;
+  if (!key) {
+    return res.status(400).json({ success: false, message: 'Key required' });
+  }
+
+  if (validKeys.includes(key)) {
+    return res.status(200).json({ success: true, message: 'Key valid' });
+  } else {
+    return res.status(401).json({ success: false, message: 'Invalid key' });
+  }
+}
