@@ -2,92 +2,56 @@ const { createClient } = require('@supabase/supabase-js');
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
-};
+const RATE_LIMIT = new Map();
 
 exports.handler = async (event) => {
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 204,
-      headers: CORS_HEADERS,
-      body: ''
-    };
-  }
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Method Not Allowed' };
 
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers: CORS_HEADERS,
-      body: JSON.stringify({ error: 'Method not allowed' })
-    };
+  const ip = event.headers['x-forwarded-for'] || 'unknown';
+  const now = Date.now();
+  const limit = RATE_LIMIT.get(ip) || { count: 0, reset: now + 60000 };
+
+  if (now > limit.reset) {
+    limit.count = 0;
+    limit.reset = now + 60000;
   }
+  if (limit.count >= 10) {
+    return { statusCode: 429, body: JSON.stringify({ success: false, message: 'Too many requests' }) };
+  }
+  limit.count++;
+  RATE_LIMIT.set(ip, limit);
 
   const { key, device_id } = JSON.parse(event.body || '{}');
   if (!key || !device_id) {
-    return {
-      statusCode: 400,
-      headers: CORS_HEADERS,
-      body: JSON.stringify({ success: false, message: 'Key & device required' })
-    };
+    return { statusCode: 400, body: JSON.stringify({ success: false }) };
   }
 
   try {
-    const { data: keyData, error: keyError } = await supabase
+    const { data: keyData, error } = await supabase
       .from('license_keys')
-      .select('id, is_active, device_id')
+      .select('*')
       .eq('key', key.trim())
+      .eq('is_active', true)
       .single();
 
-    if (keyError || !keyData || !keyData.is_active) {
-      return {
-        statusCode: 401,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({ success: false, message: 'Invalid key' })
-      };
+    if (error || !keyData) {
+      return { statusCode: 403, body: JSON.stringify({ success: false }) };
     }
 
-    if (keyData.device_id) {
-      if (keyData.device_id !== device_id) {
-        return {
-          statusCode: 403,
-          headers: CORS_HEADERS,
-          body: JSON.stringify({
-            success: false,
-            message: 'Key sudah dipakai di perangkat lain.'
-          })
-        };
-      }
-      return {
-        statusCode: 200,
-        headers: CORS_HEADERS,
-        body: JSON.stringify({ success: true })
-      };
+    if (keyData.device_id && keyData.device_id !== device_id) {
+      return { statusCode: 403, body: JSON.stringify({ success: false, message: 'Key sudah dipakai di perangkat lain.' }) };
     }
 
-    await supabase
-      .from('license_keys')
-      .update({
-        device_id,
-        used_at: new Date().toISOString()
-      })
-      .eq('key', key.trim());
+    if (!keyData.device_id) {
+      await supabase
+        .from('license_keys')
+        .update({ device_id, used_at: new Date().toISOString() })
+        .eq('key', key.trim());
+    }
 
-    return {
-      statusCode: 200,
-      headers: CORS_HEADERS,
-      body: JSON.stringify({ success: true })
-    };
-
+    return { statusCode: 200, body: JSON.stringify({ success: true }) };
   } catch (err) {
     console.error('Validate error:', err);
-    return {
-      statusCode: 500,
-      headers: CORS_HEADERS,
-      body: JSON.stringify({ success: false, message: 'Server error' })
-    };
+    return { statusCode: 500, body: JSON.stringify({ success: false }) };
   }
 };
